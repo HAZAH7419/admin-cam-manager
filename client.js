@@ -1,6 +1,3 @@
-import dotenv from "dotenv";
-dotenv.config(); // Load environment variables from .env file
-
 import WebSocket from "ws";
 import fetch from "node-fetch";
 
@@ -18,9 +15,10 @@ function tryDatetime(obj) {
   return ret;
 }
 
-class CRCONWebSocketClient {
-  constructor(server) {
+export class CRCONWebSocketClient {
+  constructor(server, state) {
     this.server = server;
+    this.state = state
     this.ws = null; // Holds the WebSocket instance
     this.retryCount = 0; // Keeps track of retry attempts
     this.maxRetries = 5; // Set maximum retries to avoid infinite loops
@@ -93,6 +91,11 @@ class CRCONWebSocketClient {
   }
 
   async handleIncomingMessage(ws, message) {
+    if (!this.state.isEnabled()) {
+      // ignore any processing
+      return
+    }
+
     const jsonObject = JSON.parse(message);
     if (jsonObject) {
       const logsBundle = jsonObject.logs || [];
@@ -168,22 +171,24 @@ class CRCONWebSocketClient {
 
     for (const admin of adminList.result) {
       try {
-        const response = await fetch(
-          `${this.server.rconHttp}/api/remove_admin`,
-          {
-            method: "POST",
-            headers: headers,
-            body: JSON.stringify({
-              player_id: admin.player_id,
-            }),
-          }
-        );
-
-        const data = await response.json();
-        console.log(
-          `Admin access removed for ${admin.playerName} (${admin.steamId}):`,
-          data
-        );
+        if (!this.state.isStreamer(admin)) {
+          const response = await fetch(
+            `${this.server.rconHttp}/api/remove_admin`,
+            {
+              method: "POST",
+              headers: headers,
+              body: JSON.stringify({
+                player_id: admin.player_id,
+              }),
+            }
+          );
+  
+          const data = await response.json();
+          console.log(
+            `Admin access removed for ${admin.playerName} (${admin.steamId}):`,
+            data
+          );
+        }
       } catch (error) {
         console.error(
           `Error removing admin cam access for ${admin.playerName} (${admin.steamId}):`,
@@ -193,14 +198,3 @@ class CRCONWebSocketClient {
     }
   }
 }
-
-// Load environment variables for the server configuration
-const server = {
-  rconApiKey: process.env.RCON_API_KEY,
-  rconLoginHeaders: JSON.parse(process.env.RCON_LOGIN_HEADERS || "{}"),
-  rconWebSocket: process.env.RCON_WEB_SOCKET,
-  rconHttp: process.env.RECON_HTTP,
-};
-
-const client = new CRCONWebSocketClient(server);
-client.startSocket(false);
