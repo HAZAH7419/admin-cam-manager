@@ -18,7 +18,7 @@ function tryDatetime(obj) {
 export class CRCONWebSocketClient {
   constructor(server, state) {
     this.server = server;
-    this.state = state
+    this.state = state;
     this.ws = null; // Holds the WebSocket instance
     this.retryCount = 0; // Keeps track of retry attempts
     this.maxRetries = 5; // Set maximum retries to avoid infinite loops
@@ -91,18 +91,23 @@ export class CRCONWebSocketClient {
   }
 
   async handleIncomingMessage(ws, message) {
-    if (!this.state.isEnabled()) {
-      // ignore any processing
-      return
-    }
+    // if (!this.state.isEnabled()) {
+    //   // ignore any processing
+    //   return;
+    // }
 
     const jsonObject = JSON.parse(message);
+    console.info("jsonObject", jsonObject);
     if (jsonObject) {
       const logsBundle = jsonObject.logs || [];
+      console.info("logsBundle", logsBundle);
       // Process logs here
       logsBundle.forEach((object) => {
+        console.info("inside log loop");
+        console.info("log", object.log);
         const log = object.log;
         if (log.sub_content.includes("!cam")) {
+          console.log("log", log);
           this.handleAdminCamAccess(log.player_id_1, log.player_name_1);
         }
         // if (log.sub_content.includes("!remove")) {
@@ -124,6 +129,7 @@ export class CRCONWebSocketClient {
       "Content-Type": "application/json",
       ...this.server.rconLoginHeaders,
     };
+
     try {
       const response = await fetch(`${this.server.rconHttp}/api/add_admin`, {
         method: "POST",
@@ -182,7 +188,7 @@ export class CRCONWebSocketClient {
               }),
             }
           );
-  
+
           const data = await response.json();
           console.log(
             `Admin access removed for ${admin.playerName} (${admin.steamId}):`,

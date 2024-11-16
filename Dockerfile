@@ -17,4 +17,4 @@ COPY . .
 EXPOSE 3000
 
 # Set the command to run the app
-CMD ["node", "client.js"]
+CMD ["npm", "start"]
