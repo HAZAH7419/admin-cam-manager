@@ -1,5 +1,6 @@
 import WebSocket from "ws";
 import fetch from "node-fetch";
+import { resolveMapName } from "./mapList.js";
 
 const ALL_ACTIONS_TO_MONITOR = ["CHAT", "MATCH ENDED"];
 
@@ -143,6 +144,11 @@ export class CRCONWebSocketClient {
           console.log("log", log);
           this.handleAdminCamAccess(log.player_id_1, log.player_name_1);
         }
+
+        if (log.sub_content.startsWith("!map ")) {
+          const mapInput = log.sub_content.slice(5).trim();
+          this.handleMapChange(mapInput);
+        }
         // if (log.sub_content.includes("!remove")) {
         //   this.removeAllAdmins();
         // }
@@ -153,6 +159,51 @@ export class CRCONWebSocketClient {
           this.removeAllAdmins();
         }
       });
+    }
+  }
+
+  async handleMapChange(mapInput) {
+    const headers = {
+      Authorization: `Bearer ${this.server.rconApiKey}`,
+      "Content-Type": "application/json",
+      ...this.server.rconLoginHeaders,
+    };
+
+    try {
+      const gameStateResponse = await fetch(`${this.server.rconHttp}/api/get_gamestate`, {
+        method: "GET",
+        headers,
+      });
+      const gameStateData = await gameStateResponse.json();
+      const totalPlayers =
+        (gameStateData.result?.num_allied_players ?? 0) +
+        (gameStateData.result?.num_axis_players ?? 0);
+
+      if (totalPlayers >= 30) {
+        console.log(`Map change denied: server has ${totalPlayers} players (limit: 30)`);
+        return;
+      }
+    } catch (error) {
+      console.error("Error fetching game state for map change:", error);
+      return;
+    }
+
+    const mapName = resolveMapName(mapInput);
+    if (!mapName) {
+      console.warn(`Map change denied: unknown map alias "${mapInput}"`);
+      return;
+    }
+
+    try {
+      const response = await fetch(`${this.server.rconHttp}/api/set_map`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ map_name: mapName }),
+      });
+      const data = await response.json();
+      console.log(`Map changed to ${mapName}:`, data);
+    } catch (error) {
+      console.error(`Error changing map to ${mapName}:`, error);
     }
   }
 
