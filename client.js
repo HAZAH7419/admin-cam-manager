@@ -23,6 +23,7 @@ export class CRCONWebSocketClient {
     this.retryCount = 0; // Keeps track of retry attempts
     this.maxRetries = 5; // Set maximum retries to avoid infinite loops
     this.lastSeenId = null; // Store the last processed message ID
+    this.playerCountInterval = null; // Holds the player count polling interval
   }
 
   async startSocket(stopEvent) {
@@ -45,6 +46,7 @@ export class CRCONWebSocketClient {
       this.ws.on("open", () => {
         console.log(`Connected to CRCON websocket ${websocketUrl}`);
         this.retryCount = 0; // Reset retry count on successful connection
+        this.startPlayerCountMonitor();
         this.ws.send(
           JSON.stringify({
             last_seen_id: this.lastSeenId,
@@ -54,6 +56,7 @@ export class CRCONWebSocketClient {
       });
 
       this.ws.on("message", async (data) => {
+        console.log('seen message');
         const message = data.toString();
         try {
           await this.handleIncomingMessage(this.ws, message);
@@ -64,6 +67,8 @@ export class CRCONWebSocketClient {
 
       this.ws.on("close", () => {
         console.warn("WebSocket connection closed");
+        clearInterval(this.playerCountInterval);
+        this.playerCountInterval = null;
         this.handleReconnection(); // Try reconnecting after close
       });
 
@@ -75,6 +80,34 @@ export class CRCONWebSocketClient {
       console.error(`Error connecting to ${websocketUrl}`, e);
       this.handleReconnection(); // Try reconnecting after an exception
     }
+  }
+
+  // Monitors the player count and once it's over 60 it removes all spectator admins
+  startPlayerCountMonitor(intervalMs = 60000) {
+    if (this.playerCountInterval) return; // already running
+    this.playerCountInterval = setInterval(async () => {
+      try {
+        const headers = {
+          Authorization: `Bearer ${this.server.rconApiKey}`,
+          ...this.server.rconLoginHeaders,
+        };
+        const response = await fetch(`${this.server.rconHttp}/api/get_gamestate`, {
+          method: "GET",
+          headers,
+        });
+        const data = await response.json();
+        const totalPlayers =
+          (data.result?.num_allied_players ?? 0) +
+          (data.result?.num_axis_players ?? 0);
+        console.log(`Player count check: ${totalPlayers} players`);
+        if (totalPlayers > 60) {
+          console.log(`Player threshold exceeded (${totalPlayers}), removing Spectator admins`);
+          this.removeAllAdmins();
+        }
+      } catch (error) {
+        console.error("Error during player count check:", error);
+      }
+    }, intervalMs);
   }
 
   handleReconnection() {
@@ -131,6 +164,25 @@ export class CRCONWebSocketClient {
     };
 
     try {
+      const gameStateResponse = await fetch(`${this.server.rconHttp}/api/get_gamestate`, {
+        method: "GET",
+        headers: headers,
+      });
+      const gameStateData = await gameStateResponse.json();
+      const totalPlayers =
+        (gameStateData.result?.num_allied_players ?? 0) +
+        (gameStateData.result?.num_axis_players ?? 0);
+
+      if (totalPlayers > 60) {
+        console.log(`Admin cam request denied: server has ${totalPlayers} players (limit: 60)`);
+        return;
+      }
+    } catch (error) {
+      console.error("Error fetching game state:", error);
+      return;
+    }
+
+    try {
       const response = await fetch(`${this.server.rconHttp}/api/add_admin`, {
         method: "POST",
         headers: headers,
@@ -140,6 +192,7 @@ export class CRCONWebSocketClient {
           role: "Spectator",
         }),
       });
+      console.info("response", response);
       const data = await response.json();
       console.log("Admin cam access granted:", data);
     } catch (error) {
@@ -175,9 +228,10 @@ export class CRCONWebSocketClient {
       console.error("Error fetching admin player IDs:", error);
     }
 
+    // Only remove admins with the "Spectator" role
     for (const admin of adminList.result) {
       try {
-        if (!this.state.isStreamer(admin)) {
+        if (admin.role?.toLowerCase() === "spectator" && !this.state.isStreamer(admin)) {
           const response = await fetch(
             `${this.server.rconHttp}/api/remove_admin`,
             {
